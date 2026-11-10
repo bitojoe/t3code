@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -12,7 +12,7 @@ import {
   type HistoryDirection,
 } from "../../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { cn } from "../../lib/utils";
+import { cn, isMacPlatform } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
@@ -34,6 +34,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import { MacosWindowControls } from "./MacosWindowControls";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -60,10 +61,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     <div
       className={cn(
         "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
+        // A peeking sidebar is inset and bordered; this keeps the header on the window's title bar line.
+        "group-data-peek:-mt-[calc(var(--sidebar-peek-inset)+1px)]",
         isElectron && "drag-region",
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {isElectron && isMacPlatform(navigator.platform) ? (
+        // Under the native buttons' spot; they slide with the sidebar until the native ones cover them.
+        <MacosWindowControls className="absolute inset-y-0 left-4 z-20 hidden md:in-data-[macos-window-controls=sidebar]:flex group-data-peek:left-[calc(1rem-var(--sidebar-peek-inset)-1px)]" />
+      ) : null}
       <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
         <SidebarTrigger
           variant={backdropVariant ? "media-navigation" : "ghost"}
@@ -74,12 +81,6 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
         <div className="flex shrink-0 items-center gap-1">
           <SidebarBrand onBackdrop={backdropVariant !== null} />
-          {isElectron ? (
-            <div className="hidden items-center md:flex">
-              <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
-              <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
-            </div>
-          ) : null}
         </div>
         {pillLabel ? (
           <div className="ml-1 flex h-7 items-center">
@@ -89,6 +90,12 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           </div>
         ) : null}
       </div>
+      {isElectron ? (
+        <div className="relative z-10 hidden shrink-0 items-center md:flex">
+          <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
+          <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
+        </div>
+      ) : null}
     </div>
   );
 });
@@ -96,9 +103,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 export function SidebarBrandWidthProbe({
   isElectron,
   onWidthChange,
+  style,
 }: {
   isElectron: boolean;
   onWidthChange: (width: number) => void;
+  style?: CSSProperties;
 }) {
   const observeWidth = (probe: HTMLDivElement) => {
     return observeResize(probe, ([entry]) => {
@@ -109,10 +118,12 @@ export function SidebarBrandWidthProbe({
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
+      // pr-5.5 is the header's pr-3 plus the peeking card's inset and border on both sides.
+      className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-5.5"
       ref={observeWidth}
+      style={style}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
+      <div className="ml-[calc(var(--workspace-controls-left)+1px)] flex gap-2">
         <SidebarBrandMark onBackdrop={false} />
         {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
       </div>
@@ -167,7 +178,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="T3 Code home"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        "relative z-10 ml-[calc(var(--workspace-controls-left)+1px)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"

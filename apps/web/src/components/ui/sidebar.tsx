@@ -43,6 +43,12 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
+  /** A collapsed desktop sidebar is floating over the content. */
+  peeking: boolean;
+  setPeeking: (peeking: boolean) => void;
+  /** The desktop sidebar has finished sliding since it last opened, collapsed or peeked. */
+  slideSettled: boolean;
+  setSlideSettled: (settled: boolean) => void;
   /** Runs before the desktop sidebar collapses. */
   onCollapse: (listener: () => void) => () => void;
 };
@@ -204,6 +210,21 @@ function SidebarProvider({
   };
 
   const state = resolveSidebarState({ isMobile, open, openMobile });
+  const [peekRequested, setPeekRequested] = React.useState(false);
+  const [peekSidebarState, setPeekSidebarState] = React.useState(state);
+  if (peekSidebarState !== state) {
+    // Opening or collapsing the sidebar ends a peek, so collapsing later never reopens it.
+    setPeekSidebarState(state);
+    setPeekRequested(false);
+  }
+  const peeking = peekRequested && !isMobile && state === "collapsed";
+  const [slideSettled, setSlideSettled] = React.useState(true);
+  const [slideSource, setSlideSource] = React.useState({ state, peeking });
+  if (slideSource.state !== state || slideSource.peeking !== peeking) {
+    setSlideSource({ state, peeking });
+    // Pinning a peeking sidebar leaves it where it already is.
+    setSlideSettled(slideSource.peeking && state === "expanded");
+  }
 
   const contextValue: SidebarContextProps = {
     isMobile,
@@ -215,6 +236,10 @@ function SidebarProvider({
     setOpenMobile: store.setOpenMobile,
     state,
     toggleSidebar: store.toggle,
+    peeking,
+    setPeeking: setPeekRequested,
+    slideSettled,
+    setSlideSettled,
     onCollapse: store.onCollapse,
   };
 
@@ -268,12 +293,22 @@ function resolveSidebarResizable({
   };
 }
 
+// How far past the peeking sidebar's edge the pointer may travel before the peek ends.
+const SIDEBAR_PEEK_EXIT_MARGIN = 24;
+// Leaving the window within this distance of the sidebar's edge starts a peek.
+const SIDEBAR_PEEK_TRIGGER_EDGE = 16;
+// Vaul's drawer motion.
+const SIDEBAR_PEEK_EASING = "500ms cubic-bezier(0.32, 0.72, 0, 1)";
+
 function Sidebar({
   side = "left",
   variant = "sidebar",
   collapsible = "offcanvas",
   resizable = false,
+  peekOnHover = false,
+  windowDrag = false,
   className,
+  style,
   children,
   ...props
 }: React.ComponentProps<"div"> & {
@@ -281,9 +316,80 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
+  /** Float a collapsed offcanvas sidebar over the content when the pointer leaves the window past its edge. */
+  peekOnHover?: boolean;
+  /** Let empty sidebar space move a frameless desktop window. */
+  windowDrag?: boolean;
 }) {
-  const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
+  const {
+    isMobile,
+    state,
+    openMobile,
+    setOpenMobile,
+    setMobileSheetElement,
+    peeking: peekRequested,
+    setPeeking,
+    setSlideSettled,
+  } = useSidebar();
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
+  const peekable = peekOnHover && offcanvasCollapsed;
+  const peeking = peekable && peekRequested;
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [motion, setMotion] = React.useState<"toggle" | "peek">("toggle");
+  const [motionSource, setMotionSource] = React.useState({ state, peeking });
+  if (motionSource.state !== state || motionSource.peeking !== peeking) {
+    setMotionSource({ state, peeking });
+    setMotion(motionSource.state !== state ? "toggle" : "peek");
+  }
+  // Toggling slides the sidebar as it sits, in step with the content; peeks float it as a card.
+  const peekCard = peekable && motion === "peek";
+  const innerRef = React.useRef<HTMLDivElement>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- watches the pointer leave the window to start a hover peek
+  React.useEffect(() => {
+    if (!peekable || peekRequested) return;
+    const onMouseOut = (event: MouseEvent) => {
+      if (event.relatedTarget !== null || event.buttons !== 0) return;
+      if (event.clientY <= 0 || event.clientY >= window.innerHeight) return;
+      const exitedPastEdge =
+        side === "left"
+          ? event.clientX <= SIDEBAR_PEEK_TRIGGER_EDGE
+          : event.clientX >= window.innerWidth - SIDEBAR_PEEK_TRIGGER_EDGE;
+      if (exitedPastEdge) setPeeking(true);
+    };
+    document.addEventListener("mouseout", onMouseOut);
+    return () => document.removeEventListener("mouseout", onMouseOut);
+  }, [peekable, peekRequested, setPeeking, side]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the pointer across the window to end a hover peek
+  React.useEffect(() => {
+    if (!peeking) return;
+    const onPointerMove = (event: PointerEvent) => {
+      const inner = innerRef.current;
+      if (!inner || event.buttons !== 0) return;
+      // Menus and popovers opened from the sidebar render in portals outside the wrapper.
+      if (
+        !(event.target instanceof Element) ||
+        !event.target.closest("[data-slot='sidebar-wrapper']")
+      ) {
+        return;
+      }
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        inner.contains(active) &&
+        active.matches("input, textarea")
+      ) {
+        return;
+      }
+      const edge = inner.offsetWidth + SIDEBAR_PEEK_EXIT_MARGIN;
+      const outside =
+        side === "left" ? event.clientX > edge : event.clientX < window.innerWidth - edge;
+      if (outside) setPeeking(false);
+    };
+    document.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => document.removeEventListener("pointermove", onPointerMove);
+  }, [peeking, setPeeking, side]);
 
   const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
   const instanceContextValue: SidebarInstanceContextProps = { side, resizable: resolvedResizable };
@@ -297,6 +403,7 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar"
+          style={style}
           {...props}
         >
           {children}
@@ -336,6 +443,7 @@ function Sidebar({
                 SIDEBAR_TITLEBAR_CONTROL_SIZE,
                 side === "left" ? "pl-safe" : "pr-safe",
               )}
+              style={style}
               {...props}
             >
               {children}
@@ -352,7 +460,8 @@ function Sidebar({
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-collapsible-mode={collapsible}
-        inert={offcanvasCollapsed}
+        inert={offcanvasCollapsed && !peeking}
+        data-peek={peekCard ? (peeking ? "open" : "closed") : undefined}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
@@ -372,28 +481,70 @@ function Sidebar({
         />
         <div
           className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
+            "fixed inset-y-0 hidden h-svh w-(--sidebar-width) md:flex",
+            peekable ? "z-40" : "z-10",
+            peekCard && "p-(--sidebar-peek-inset) [--sidebar-peek-inset:4px]",
             "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+              : !peekCard &&
+                  "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+            windowDrag && "drag-region",
             className,
           )}
           data-slot="sidebar-container"
+          onTransitionEnd={(event) => {
+            if (event.target === event.currentTarget && event.propertyName === side) {
+              setSlideSettled(true);
+            }
+          }}
+          style={
+            peekCard
+              ? {
+                  ...style,
+                  ...(peeking ? { [side]: 0 } : {}),
+                  transition: reduceMotion
+                    ? "none"
+                    : `left ${SIDEBAR_PEEK_EASING}, right ${SIDEBAR_PEEK_EASING}`,
+                }
+              : style
+          }
           {...props}
         >
           <div
-            className="flex h-full w-full flex-col bg-sidebar surface-grain group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5"
+            className={cn(
+              "flex h-full w-full flex-col bg-sidebar surface-grain group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5",
+              peekCard && "overflow-hidden rounded-xl border border-sidebar-border",
+              // The shadow fades with the slide, so the parked card casts none on screen.
+              peeking && "shadow-2xl",
+            )}
+            style={
+              peekCard && !reduceMotion
+                ? { transition: `box-shadow ${SIDEBAR_PEEK_EASING}` }
+                : undefined
+            }
             data-sidebar="sidebar"
             data-slot="sidebar-inner"
+            ref={innerRef}
           >
             {children}
           </div>
         </div>
       </div>
+      {peekable && !peeking ? (
+        // Catches the pointer when the window sits against the screen edge and cannot be left.
+        <div
+          aria-hidden="true"
+          className={cn("fixed inset-y-0 z-40 w-1", side === "left" ? "left-0" : "right-0")}
+          data-slot="sidebar-peek-zone"
+          onPointerEnter={(event) => {
+            if (event.buttons === 0) setPeeking(true);
+          }}
+        />
+      ) : null}
     </SidebarInstanceContext>
   );
 }

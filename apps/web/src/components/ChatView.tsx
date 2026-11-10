@@ -185,7 +185,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { isModelPickerOpen } from "../modelPickerVisibility";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { SIDEBAR_TOGGLE_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
@@ -3292,7 +3292,7 @@ export default function ChatView(props: ChatViewProps) {
                       "wco:pr-(--workspace-native-controls-inset)",
                   )
                 : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-(--workspace-gutter-start) pr-(--workspace-gutter-end)",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+              SIDEBAR_TOGGLE_TITLEBAR_INSET_CLASS,
             )}
           >
             {isElectron && rightPanelControlsAtRoot ? (

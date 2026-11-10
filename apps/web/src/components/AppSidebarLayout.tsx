@@ -18,6 +18,7 @@ import {
   undoLatestThreadAction,
 } from "../hooks/showThreadUndoNotice";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import {
   isRichTextBoldShortcut,
   resolveShortcutCommand,
@@ -31,7 +32,6 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -43,7 +43,6 @@ import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
-import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
   clampThreadSidebarWidth,
   resolveInitialThreadSidebarWidth,
@@ -52,14 +51,7 @@ import {
   THREAD_MAIN_CONTENT_MIN_WIDTH,
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
-import {
-  Sidebar,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
-  useSidebar,
-  useSidebarVisibility,
-} from "./ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
@@ -312,14 +304,40 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
+/**
+ * Arc-style: the window buttons hide with the sidebar. The sidebar draws stand-ins that slide with
+ * it, and the native buttons cover them once it comes to rest.
+ */
+function MacosWindowButtonsSync({
+  showSidebar,
+  toggleAnimated,
+}: {
+  readonly showSidebar: boolean;
+  readonly toggleAnimated: boolean;
+}) {
+  const { isMobile, open, peeking, slideSettled } = useSidebar();
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // Without a slide there is no transition end to wait for.
+  const visible =
+    !showSidebar ||
+    isMobile ||
+    (open && (slideSettled || !toggleAnimated)) ||
+    (peeking && (slideSettled || reduceMotion));
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors sidebar ownership onto the native window buttons
+  useEffect(() => {
+    const setWindowButtonsVisible = macosDesktopBridge()?.setWindowButtonsVisible;
+    if (typeof setWindowButtonsVisible === "function") void setWindowButtonsVisible(visible);
+  }, [visible]);
+
+  return null;
+}
+
 function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
-  const isSidebarVisible = useSidebarVisibility();
-  const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const { toggleSidebar, isMobile, mobileSheetMounted, peeking } = useSidebar();
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
   });
@@ -374,11 +392,16 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   );
 
   return (
+    // A zero-width flex slot that `order` places between the sidebar and the content, so the toggle
+    // rides the content's edge. It stays last in the DOM: Electron collects drag regions in DOM
+    // order, and the content header's drag region would otherwise swallow its clicks.
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none relative z-50 -order-1 w-0 shrink-0",
         isMobile && mobileSheetMounted && "hidden",
+        // The peeking sidebar covers the toggle's spot.
+        peeking && "hidden",
       )}
       data-sidebar-control=""
     >
@@ -387,11 +410,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
           <TooltipTrigger
             render={
               <SidebarTrigger
-                variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-                className={cn(
-                  "pointer-events-auto",
-                  isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-                )}
+                className="pointer-events-auto absolute top-[calc(var(--workspace-controls-top)+(var(--workspace-topbar-height)-var(--workspace-titlebar-control-size))/2)] left-[calc(var(--workspace-controls-left)+1px)]"
                 aria-label="Toggle main sidebar"
               />
             }
@@ -441,31 +460,40 @@ export function AppSidebarLayout({
     subscribeToWindowFullscreen,
     readWindowFullscreen,
   );
+  const hasMacosWindowControls = isMacosDesktop && !isWindowFullscreen;
+  // The sidebar always leaves room for the window buttons; the content only while they show.
   const windowControlsInsetStyle = (
-    isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
-      : {}
+    hasMacosWindowControls ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET } : {}
   ) as CSSProperties;
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
-    ...windowControlsInsetStyle,
+    "--macos-window-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET,
   } as CSSProperties;
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        className="h-dvh! min-h-0! [&>[data-slot=sidebar]]:-order-2"
+        data-macos-window-controls={
+          hasMacosWindowControls ? (showSidebar ? "sidebar" : "fixed") : undefined
+        }
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         storageKey="chat_thread_sidebar_open"
         style={sidebarProviderStyle}
       >
         {showSidebar ? (
           <>
-            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+            <SidebarBrandWidthProbe
+              isElectron={isElectron}
+              onWidthChange={setBrandWidth}
+              style={windowControlsInsetStyle}
+            />
             <Sidebar
               side="left"
               collapsible="offcanvas"
+              peekOnHover
+              windowDrag={isElectron}
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
@@ -489,6 +517,12 @@ export function AppSidebarLayout({
         {children}
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
+        {isMacosDesktop ? (
+          <MacosWindowButtonsSync
+            showSidebar={showSidebar}
+            toggleAnimated={routePanelAnimationsActive}
+          />
+        ) : null}
         {isElectron ? <HistorySwipeNavigation /> : null}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>

@@ -38,6 +38,12 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import {
+  MACOS_WINDOW_BUTTON_RADIUS,
+  MACOS_WORKSPACE_TOPBAR_HEIGHT,
+  resetMacosWindowButtons,
+  syncMacosWindowButtons,
+} from "./macosWindowButtons.ts";
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -49,21 +55,6 @@ class ContextMenuImageCopyError extends Schema.TaggedError<ContextMenuImageCopyE
     return "Could not copy the context-menu image.";
   }
 }
-// Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
-const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
-const MACOS_WINDOW_BUTTON_RADIUS = 7;
-
-function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
-  if (window.isDestroyed() || window.isFullScreen()) return;
-  window.setWindowButtonPosition({
-    x: 16,
-    y: Math.round(
-      (MACOS_WORKSPACE_TOPBAR_HEIGHT * window.webContents.getZoomFactor()) / 2 -
-        MACOS_WINDOW_BUTTON_RADIUS,
-    ),
-  });
-}
-
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
@@ -724,6 +715,7 @@ export const make = Effect.gen(function* () {
         else if (direction === "right" && history.canGoForward()) history.goForward();
       });
       window.on("enter-full-screen", () => {
+        syncMacosWindowButtons(window);
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
       window.on("leave-full-screen", () => {
@@ -775,6 +767,11 @@ export const make = Effect.gen(function* () {
       return retryInMs;
     };
 
+    if (environment.platform === "darwin") {
+      window.webContents.on("did-start-navigation", (details) => {
+        if (details.isMainFrame && !details.isSameDocument) resetMacosWindowButtons(window);
+      });
+    }
     window.webContents.on("did-finish-load", () => {
       if (
         environment.isDevelopment &&

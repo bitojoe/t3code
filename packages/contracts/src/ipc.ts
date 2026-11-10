@@ -92,6 +92,15 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
+
+/** What the macOS window buttons do: `zoom` is the green button's Option-click. */
+export const DesktopWindowActionSchema = Schema.Literals([
+  "close",
+  "minimize",
+  "zoom",
+  "toggle-full-screen",
+]);
+export type DesktopWindowAction = typeof DesktopWindowActionSchema.Type;
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Beta", "Dev", "Nightly"]);
 
@@ -1110,6 +1119,9 @@ export interface DesktopBridge {
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /** macOS only; other platforms ignore these. */
+  setWindowButtonsVisible: (visible: boolean) => Promise<void>;
+  performWindowAction: (action: DesktopWindowAction) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

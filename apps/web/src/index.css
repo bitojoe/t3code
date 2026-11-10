@@ -1824,6 +1824,18 @@ code {
   --pele-critical: var(--destructive);
 }
 
+/* On desktop the sidebar owns the macOS window buttons (see MacosWindowButtonsSync), so the
+   content's controls start at its own edge. */
+[data-macos-window-controls] {
+  --workspace-controls-left: var(--macos-window-controls-left);
+}
+
+@media (min-width: 768px) {
+  [data-macos-window-controls="sidebar"] {
+    --workspace-controls-left: inherit;
+  }
+}
+
 /* Window drag region (frameless titlebar) */
 .drag-region {
   -webkit-app-region: drag;
@@ -1845,6 +1857,21 @@ code {
 .drag-region select,
 .drag-region a {
   -webkit-app-region: no-drag;
+}
+
+/* Sidebar rows and controls are no-drag; what they contain adds no rectangles of its own,
+   so a long thread list costs one rectangle per row. Empty list space drags the window. */
+.drag-region[data-slot="sidebar-container"]
+  [data-slot="scroll-area-viewport"]
+  :is(li, button, a, input, [role="button"]) {
+  -webkit-app-region: no-drag;
+}
+
+.drag-region[data-slot="sidebar-container"]
+  [data-slot="scroll-area-viewport"]
+  :is(li, button, a, input, [role="button"])
+  * {
+  -webkit-app-region: initial;
 }
 
 /* Keep parent scrollbar styles off iframe owners to avoid WebKit resize loops: https://webkit.org/b/324485 */

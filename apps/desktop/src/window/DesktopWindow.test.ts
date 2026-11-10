@@ -125,6 +125,7 @@ function makeFakeBrowserWindow() {
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
     setWindowButtonPosition: vi.fn(),
+    setWindowButtonVisibility: vi.fn(),
     show: vi.fn(),
     webContents,
   };

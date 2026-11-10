@@ -71,6 +71,55 @@ describe("Sidebar", () => {
 
     expect(onResize).toHaveBeenCalledTimes(1);
   });
+
+  it("peeks a collapsed sidebar when the pointer leaves the window past its edge", async () => {
+    await page.viewport(1280, 800);
+    await using screen = await render(
+      <SidebarProvider defaultOpen={false}>
+        {/* Browser tests load no app CSS, so the sidebar needs its own width. */}
+        <Sidebar collapsible="offcanvas" peekOnHover style={{ width: 256 }}>
+          <button type="button">Thread</button>
+        </Sidebar>
+        <main style={{ position: "fixed", top: 0, right: 0 }}>Content</main>
+        <SidebarTrigger />
+      </SidebarProvider>,
+      { router: false /* no routes involved */ },
+    );
+    const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+    const content = screen.getByText("Content");
+    const leaveWindow = (clientX: number) =>
+      document.body.dispatchEvent(
+        new MouseEvent("mouseout", { bubbles: true, clientX, clientY: 400 }),
+      );
+    const peekAtScreenEdge = () =>
+      screen.container
+        .querySelector('[data-slot="sidebar-peek-zone"]')!
+        .dispatchEvent(
+          new PointerEvent("pointerover", { bubbles: true, clientX: 2, clientY: 400 }),
+        );
+    expect(sidebar.inert).toBe(true);
+
+    leaveWindow(400);
+    expect(sidebar.getAttribute("data-peek")).toBeNull();
+    leaveWindow(-3);
+    await vi.waitFor(() => expect(sidebar.getAttribute("data-peek")).toBe("open"));
+    expect(sidebar.inert).toBe(false);
+    await userEvent.hover(screen.getByRole("button", { name: "Thread" }));
+    await userEvent.hover(content);
+    await vi.waitFor(() => expect(sidebar.inert).toBe(true));
+    expect(sidebar.getAttribute("data-peek")).toBe("closed");
+
+    // Pinning from a peek and collapsing again slides the sidebar away as it sits, not as a card.
+    peekAtScreenEdge();
+    await vi.waitFor(() => expect(sidebar.getAttribute("data-peek")).toBe("open"));
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await userEvent.click(trigger);
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(trigger);
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+    expect(sidebar.getAttribute("data-peek")).toBeNull();
+    expect(sidebar.inert).toBe(true);
+  });
 });
 
 it("restores collapsed and expanded desktop state after remounting", async () => {

@@ -4,6 +4,7 @@ import {
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
   DesktopThemeSchema,
+  DesktopWindowActionSchema,
   EDITORS,
   EditorId,
   PickedThemeFileSchema,
@@ -38,6 +39,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import { setMacosWindowButtonsVisible } from "../../window/macosWindowButtons.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
@@ -287,6 +289,46 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+  }),
+});
+
+const macosMainWindowFor = Effect.fn("desktop.ipc.window.macosMainWindowFor")(function* (
+  event: DesktopIpc.DesktopIpcInvokeEvent | undefined,
+) {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+  return environment.platform === "darwin" &&
+    event !== undefined &&
+    Option.isSome(window) &&
+    window.value.webContents.id === event.sender.id
+    ? Option.some(window.value)
+    : Option.none();
+});
+
+export const setWindowButtonsVisible = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_WINDOW_BUTTONS_VISIBLE_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setWindowButtonsVisible")(function* (visible, event) {
+    const window = yield* macosMainWindowFor(event);
+    if (Option.isSome(window)) setMacosWindowButtonsVisible(window.value, visible);
+  }),
+});
+
+export const performWindowAction = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PERFORM_WINDOW_ACTION_CHANNEL,
+  payload: DesktopWindowActionSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.performWindowAction")(function* (action, event) {
+    const window = yield* macosMainWindowFor(event);
+    if (Option.isNone(window)) return;
+    const target = window.value;
+    if (action === "close") target.close();
+    else if (action === "minimize") target.minimize();
+    else if (action === "zoom") {
+      if (target.isMaximized()) target.unmaximize();
+      else target.maximize();
+    } else target.setFullScreen(!target.isFullScreen());
   }),
 });
 
